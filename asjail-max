@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# Complete solution
+
+set -e
+
+stty raw -echo
+
+# Здесь нельзя заюзать unshare вместо asjail, т. к. при запуске asjail-max с помощью sudo и использовании внутри systemd контейнер не реагирует на клавиши. Возможно, причина в том, что pty зачем-то переключается в режим "игнорю весь ввод"
+TRANSPARENT_PTY=true pty asjail -impu /opt/tpm-store/sbin/asjail-max-1 "$@" || :
+stty cooked echo

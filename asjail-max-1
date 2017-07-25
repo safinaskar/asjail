@@ -1,0 +1,125 @@
+#!/bin/sh
+
+# Написано с учётом http://www.freedesktop.org/wiki/Software/systemd/ContainerInterface
+# Должно работать для /
+
+set -e
+
+[ "$1" = "-v" ] && VERBOSE=true && shift || VERBOSE=false
+[ $# -lt 2 ] && echo "Usage: ${0##*/} [-v] ROOT EXEC-CMD..." >&2 && exit 1
+
+[ "$(printf '%s\n' "$2" | head -c 1)" != / ] && echo "${0##*/}: init should start with /" >&2 && exit 1
+
+[ "$(id -u)" != 0 ] && echo "${0##*/}: you are not root" >&2 && exit 1
+
+# Эту проверку не убирать. Она поможет запретить случайный запуск asjail-max-1 вне контейнера
+[ $$ != 1 ] && echo "${0##*/}: PID is not 1" >&2 && exit 1
+
+# Это должно стоять до mount --bind "$1" /dev/.asjail-root, т. к. иначе bind-mount будет также и в основном namespace
+mount --make-rprivate /
+
+rmdir /dev/.asjail-root 2> /dev/null || :
+mkdir /dev/.asjail-root
+mount --bind "$1" /dev/.asjail-root
+shift
+cd /
+
+for I in 1 2 3 4 5 6 7 8 9 10 stop; do
+	if [ "$I" = stop ]; then
+		echo "${0##*/}: too many attempts, cannot unmount the tree, try -v" >&2
+		umount /dev/.asjail-root
+		rmdir /dev/.asjail-root
+		exit 1
+	fi
+
+	"$VERBOSE" && echo "${0##*/}: attempt $I..."
+
+	tac < /etc/mtab > /dev/.asjail-mtab # We need to copy mtab anyway (or we will read mtab while it will change)
+
+	OK=true
+
+	while read -r DEV DIR ETC; do
+		"$VERBOSE" && printf '%s' "${0##*/}: $DEV on $DIR... "
+
+		case "$DIR" in
+			/|/proc|/dev|/dev/.asjail-root|/dev/pts|/tmp)
+				# / - contains /proc and mtab :)
+				# /proc - mtab is symlink to /proc/mounts
+				# /dev - may contain terminal
+				# /dev/.asjail-root - we need it
+				# /dev/pts - may contain terminal
+				# /tmp - we need it for tac
+
+				"$VERBOSE" && echo "skipping"
+				;;
+			*)
+				if "$VERBOSE"; then
+					if fstab-decode umount "$DIR"; then
+						echo "done"
+					else
+						OK=false
+					fi
+				else
+					fstab-decode umount "$DIR" 2> /dev/null || OK=false
+				fi
+				;;
+		esac
+	done < /dev/.asjail-mtab
+
+	rm /dev/.asjail-mtab
+
+	"$OK" && break
+done
+
+"$VERBOSE" && echo "${0##*/}: the tree unmounted; now we may have /, /proc, /dev, /dev/.asjail-root, /dev/pts, /tmp only"
+
+umount /tmp 2> /dev/null || :
+
+mount --move /dev/.asjail-root /root
+rmdir /dev/.asjail-root
+
+"$VERBOSE" && echo "${0##*/}: now we have /, /proc, /dev, /dev/pts, /root only"
+
+mount -t sysfs -o ro sysfs /root/sys
+mount -t proc proc /root/proc
+mount --bind /root/proc/sys /root/proc/sys
+mount -o remount,ro,bind /root/proc/sys
+
+"$VERBOSE" && echo "${0##*/}: now we have /, /proc, /dev, /dev/pts, /root/* only"
+
+mount -t tmpfs tmpfs /root/dev
+
+: > /root/dev/console
+
+mount --bind "$(tty)" /root/dev/console
+
+umount -l /dev/pts /dev
+
+"$VERBOSE" && echo "${0##*/}: now we have /, /proc, /root/* only"
+
+mknod -m 666 /root/dev/null    c 1 3
+mknod -m 666 /root/dev/zero    c 1 5
+mknod -m 666 /root/dev/full    c 1 7
+mknod -m 666 /root/dev/random  c 1 8
+mknod -m 666 /root/dev/urandom c 1 9
+mknod -m 666 /root/dev/tty     c 5 0
+mknod -m 666 /root/dev/ptmx    c 5 2
+
+chown root:root /root/dev/null /root/dev/zero /root/dev/full /root/dev/random /root/dev/urandom
+chown root:tty /root/dev/tty /root/dev/ptmx
+
+"$VERBOSE" && echo "${0##*/}: final stage"
+
+umount -nl /proc # Иногда не получается отмонтировать /proc без -l
+
+"$VERBOSE" && echo "${0##*/}: now we have /, /root/* only"
+
+cd /root
+
+if ! [ -d root ]; then
+	echo "${0##*/}: no /root in the container" >&2
+	exit 1
+fi
+
+pivot_root . root
+exec /usr/sbin/chroot . /usr/bin/env -i HOME=/ TERM="$TERM" container=asjail /bin/sh -c '/bin/umount /root && exec "$@"' asjail-finish "$@" 0<> dev/console >&0 2>&0

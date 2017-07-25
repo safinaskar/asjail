@@ -1,7 +1,7 @@
 PACKAGE='safinaskar/asjail'
 ARCH='any'
 
-DEPENDS='safinaskar/libsh'
+DEPENDS='safinaskar/libsh prog:stty:coreutils safinaskar/pty prog:mount:mount prog:umount:mount prog:tac:coreutils prog:fstab-decode:sysvinit-utils prog:mknod:coreutils prog:pivot_root:util-linux prog:chroot:coreutils'
 BUILD_DEPENDS='prog:cmake:cmake prog:make:make prog:c++:g++'
 LIBS='libc:6 libstdc++:6:libstdc++-6-dev'
 

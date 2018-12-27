@@ -42,13 +42,14 @@ for I in 1 2 3 4 5 6 7 8 9 10 stop; do
 		"$VERBOSE" && printf '%s' "${0##*/}: $DEV on $DIR... "
 
 		case "$DIR" in
-			/|/proc|/dev|/dev/.asjail-root|/dev/pts|/tmp)
+			/|/proc|/dev|/dev/.asjail-root|/dev/pts|/tmp|/proc/sys/fs/binfmt_misc)
 				# / - contains /proc and mtab :)
 				# /proc - mtab is symlink to /proc/mounts
 				# /dev - may contain terminal
 				# /dev/.asjail-root - we need it
 				# /dev/pts - may contain terminal
 				# /tmp - we need it for tac
+				# /proc/sys/fs/binfmt_misc - виснет
 
 				"$VERBOSE" && echo "skipping"
 				;;
@@ -69,6 +70,10 @@ for I in 1 2 3 4 5 6 7 8 9 10 stop; do
 	rm /dev/.asjail-mtab
 
 	"$OK" && break
+done
+
+while umount -l /proc/sys/fs/binfmt_misc 2> /dev/null; do
+	:
 done
 
 "$VERBOSE" && echo "${0##*/}: the tree unmounted; now we may have /, /proc, /dev, /dev/.asjail-root, /dev/pts, /tmp only"
